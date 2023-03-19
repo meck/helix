@@ -4241,7 +4241,6 @@ pub fn completion(cx: &mut Context) {
                 .map(|lsp_item| CompletionItem {
                     language_server_id,
                     lsp_item,
-                    offset_encoding,
                 })
                 .collect();
 

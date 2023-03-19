@@ -21,7 +21,6 @@ use helix_lsp::{lsp, util, OffsetEncoding};
 pub struct CompletionItem {
     pub language_server_id: usize,
     pub lsp_item: lsp::CompletionItem,
-    pub offset_encoding: OffsetEncoding,
 }
 
 impl menu::Item for CompletionItem {
@@ -120,6 +119,7 @@ impl Completion {
                 doc: &Document,
                 view_id: ViewId,
                 item: &CompletionItem,
+                offset_encoding: OffsetEncoding,
                 trigger_offset: usize,
                 include_placeholder: bool,
                 replace_mode: bool,
@@ -141,8 +141,6 @@ impl Completion {
                             lsp::TextEdit::new(range, item.new_text.clone())
                         }
                     };
-
-                    let offset_encoding = item.offset_encoding;
 
                     let Some(range) = util::lsp_range_to_range(doc.text(), edit.range, offset_encoding) else{
                         return Transaction::new(doc.text());
@@ -224,8 +222,21 @@ impl Completion {
                     // always present here
                     let item = item.unwrap();
 
-                    let transaction =
-                        item_to_transaction(doc, view.id, item, trigger_offset, true, replace_mode);
+                    let offset_encoding = editor
+                        .language_servers
+                        .get_by_id(item.language_server_id)
+                        .expect("language server disappeared between completion request and application")
+                        .offset_encoding();
+
+                    let transaction = item_to_transaction(
+                        doc,
+                        view.id,
+                        item,
+                        offset_encoding,
+                        trigger_offset,
+                        true,
+                        replace_mode,
+                    );
 
                     // initialize a savepoint
                     doc.apply(&transaction, view.id);
@@ -239,10 +250,17 @@ impl Completion {
                     // always present here
                     let item = item.unwrap();
 
+                    let offset_encoding = editor
+                        .language_servers
+                        .get_by_id(item.language_server_id)
+                        .expect("language server disappeared between completion request and application")
+                        .offset_encoding();
+
                     let transaction = item_to_transaction(
                         doc,
                         view.id,
                         item,
+                        offset_encoding,
                         trigger_offset,
                         false,
                         replace_mode,
@@ -281,7 +299,7 @@ impl Completion {
                             let transaction = util::generate_transaction_from_edits(
                                 doc.text(),
                                 additional_edits.clone(),
-                                item.offset_encoding, // TODO: should probably transcode in Client
+                                offset_encoding, // TODO: should probably transcode in Client
                             );
                             doc.apply(&transaction, view.id);
                         }
@@ -373,12 +391,11 @@ impl Completion {
         // > 'completionItem/resolve' request is sent with the selected completion item as a parameter.
         // > The returned completion item should have the documentation property filled in.
         // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
-        let (current_item, ls_id, offset_encoding) = match self.popup.contents().selection() {
+        let (current_item, ls_id) = match self.popup.contents().selection() {
             Some(CompletionItem {
                 lsp_item,
-                language_server_id: ls_id,
-                offset_encoding,
-            }) if lsp_item.documentation.is_none() => (lsp_item.clone(), *ls_id, *offset_encoding),
+                language_server_id,
+            }) if lsp_item.documentation.is_none() => (lsp_item.clone(), *language_server_id),
             _ => return false,
         };
 
@@ -409,12 +426,10 @@ impl Completion {
                     let current_item = CompletionItem {
                         lsp_item: current_item,
                         language_server_id: ls_id,
-                        offset_encoding,
                     };
                     let resolved_item = CompletionItem {
                         lsp_item: resolved_item,
                         language_server_id: ls_id,
-                        offset_encoding,
                     };
                     completion.replace_item(current_item, resolved_item);
                 }
